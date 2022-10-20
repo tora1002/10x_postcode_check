@@ -1,6 +1,7 @@
 <?php
 
-$test_array = makeArrayForCsv("okura_20220927.csv");
+$csv_file_name = $argv[1];
+$test_array = makeArrayForCsv($csv_file_name);
 
 $result_address_information_for_navitaime_api = array();
 foreach ($test_array as $post_code => $ary) {
