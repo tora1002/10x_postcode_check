@@ -1,16 +1,19 @@
 <?php
 
 $csv_file_name = $argv[1];
-$test_array = makeArrayForCsv($csv_file_name);
+$csv_array = makeArrayForCsv($csv_file_name);
 
-$result_address_information_for_navitaime_api = array();
-foreach ($test_array as $post_code => $ary) {
-    // 住所の配列だけを返す
-    $result_address_information_for_navitaime_api[$post_code] = getAddressInformationForNavitaimeApi($post_code);
-}
+print_r($csv_array);
+
+
+//$navitaime_array = array();
+//foreach ($csv_array as $post_code => $ary) {
+//    // 住所の配列だけを返す
+//    $navitaime_array[$post_code] = getAddressInformationForNavitaimeApi($post_code);
+//}
 
 // 比較する
-compareAddressInformation($test_array, $result_address_information_for_navitaime_api);
+//compareAddressInformation($csv_array, $navitaime_array);
 
 //***** 自作関数 *****//
 function makeArrayForCsv($file_name)
@@ -32,8 +35,10 @@ function makeArrayForCsv($file_name)
         if (array_key_exists($item[3], $output_array)) {
             if (is_null($item[7])) {
                 array_push($output_array[$item[3]], $item[4].$item[5].$item[6]);
+                sort($output_array[$item[3]]);
             } else {
                 array_push($output_array[$item[3]], $item[4].$item[5].$item[6].$item[7]);
+                sort($output_array[$item[3]]);
             }
         } else {
             if (is_null($item[7])) {
@@ -47,12 +52,11 @@ function makeArrayForCsv($file_name)
     return $output_array;
 }
 
-
 function getAddressInformationForNavitaimeApi($post_code)
 { 
     $curl = curl_init();
     curl_setopt_array($curl, [
-        CURLOPT_URL => "https://navitime-geocoding.p.rapidapi.com/address/postal_code?postal_code=". $post_code ."&datum=wgs84&offset=0&coord_unit=degree&limit=20",
+        CURLOPT_URL => "https://navitime-geocoding.p.rapidapi.com/address/postal_code?postal_code=5700022&datum=wgs84&offset=0&coord_unit=degree&limit=10",
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_ENCODING => "",
@@ -62,7 +66,7 @@ function getAddressInformationForNavitaimeApi($post_code)
         CURLOPT_CUSTOMREQUEST => "GET",
         CURLOPT_HTTPHEADER => [
         "X-RapidAPI-Host: navitime-geocoding.p.rapidapi.com",
-        "X-RapidAPI-Key: 3fdbab3117msh19426a0d02cc7cdp1711a9jsnf707142a6934"
+        "X-RapidAPI-Key: 383ecb86f7msh50760c628d3b11dp1ac3e7jsn6aa8d6d904ff"
         ],
     ]);
 
@@ -78,10 +82,14 @@ function getAddressInformationForNavitaimeApi($post_code)
         $items_obj = $response_obj->items;
         $result_array = array();
         // 返ってきたオブジェクトから、存在するであろう住所一覧を生成する
-        foreach($items_obj as $obj) {
-            array_push($result_array, $obj->name);
+        if (is_array($items_obj)) {
+            foreach($items_obj as $obj) {
+                array_push($result_array, $obj->name);
+            }
+            return $result_array;
+        } else {
+            echo "$post_code の結果が帰ってこない\n";
         }
-        return $result_array;
     }
 }
 
@@ -90,41 +98,45 @@ function compareAddressInformation($csv_array, $api_array)
     // APIの結果にあって、csvのリストにないので、抜け漏れの可能性あり
     $exist_api_array = array();
     foreach($api_array as $api_key => $api_values_array) {
-        foreach ($api_values_array as $api) {
-            foreach ($csv_array[$api_key] as $csv) {
-                if ($api == $csv) {
-                    if (empty($exist_api_array["$api_key"])) {
-                        $exist_api_array["$api_key"] = [$api];
-                    } else {
-                        foreach ($exist_api_array as $key => $val) {
-                            if ($key == $api_key) {
-                                array_push($exist_api_array[$api_key], $api);
+        if (!empty($api_values_array)) {
+            foreach ($api_values_array as $api) {
+                foreach ($csv_array[$api_key] as $csv) {
+                    if ($api == $csv) {
+                        if (empty($exist_api_array["$api_key"])) {
+                            $exist_api_array["$api_key"] = [$api];
+                        } else {
+                            foreach ($exist_api_array as $key => $val) {
+                                if ($key == $api_key) {
+                                    array_push($exist_api_array[$api_key], $api);
+                                }
                             }
                         }
+                        break;
                     }
-                    break;
                 }
             }
+            $not_api_array = array_diff_recursive($api_array, $exist_api_array);
         }
-        $not_api_array = array_diff_recursive($api_array, $exist_api_array);
     }
 
     // csvリストにあって、APIの結果にないので、調査必要（あまり想定していない）
     $exist_csv_array = array();
     foreach($csv_array as $csv_key => $csv_values_array) {
         foreach ($csv_values_array as $csv) {
-            foreach ($api_array[$csv_key] as $api) {
-                if ($api == $csv) {
-                    if (empty($exist_csv_array["$csv_key"])) {
-                        $exist_csv_array["$csv_key"] = [$csv];
-                    } else {
-                        foreach ($exist_csv_array as $key => $val) {
-                            if ($key == $csv_key) {
-                                array_push($exist_csv_array[$csv_key], $csv);
+            if (array_key_exists($csv_key, $api_array)) {
+                foreach ($api_array[$csv_key] as $api) {
+                    if ($api == $csv) {
+                        if (empty($exist_csv_array["$csv_key"])) {
+                            $exist_csv_array["$csv_key"] = [$csv];
+                        } else {
+                            foreach ($exist_csv_array as $key => $val) {
+                                if ($key == $csv_key) {
+                                    array_push($exist_csv_array[$csv_key], $csv);
+                                }
                             }
                         }
+                        break;
                     }
-                    break;
                 }
             }
         }
@@ -137,9 +149,11 @@ function compareAddressInformation($csv_array, $api_array)
     } else {
         echo "APIの結果にあって、csvのリストにない住所は存在一覧：\n";
         foreach ($not_api_array as $not_api_key => $not_api_array_detials) {
-            echo "郵便番号：". $not_api_key ."\n";
-            foreach ($not_api_array_detials as $ary) {
-                echo "$ary\n";
+            if (!empty($not_api_array_detials)) {
+                echo "郵便番号：". $not_api_key ."\n";
+                foreach ($not_api_array_detials as $ary) {
+                    echo "$ary\n";
+                }
             }
         }
     }
@@ -149,9 +163,11 @@ function compareAddressInformation($csv_array, $api_array)
     } else {
         echo "CSVにあって、APIの結果にない住所は存在一覧：\n";
         foreach ($not_csv_array as $not_csv_key => $not_csv_array_detials) {
-            echo "郵便番号". $not_csv_key ."\n";
-            foreach ($not_csv_array_detials as $ary) {
-                echo "$ary\n";
+            if (!empty($not_csv_array_detials)) {
+                echo "郵便番号". $not_csv_key ."\n";
+                foreach ($not_csv_array_detials as $ary) {
+                    echo "$ary\n";
+                }
             }
         }
     }
