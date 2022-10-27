@@ -1,21 +1,14 @@
 <?php
-
+// コマンドからcsv名を取得
 $csv_file_name = $argv[1];
+
+// 扱いやすいようにcsvから配列にデータ変換
 $csv_array = makeArrayForCsv($csv_file_name);
 
-print_r($csv_array);
+// データチェック
+checkData($csv_array);
 
-
-//$navitaime_array = array();
-//foreach ($csv_array as $post_code => $ary) {
-//    // 住所の配列だけを返す
-//    $navitaime_array[$post_code] = getAddressInformationForNavitaimeApi($post_code);
-//}
-
-// 比較する
-//compareAddressInformation($csv_array, $navitaime_array);
-
-//***** 自作関数 *****//
+//***** メイン自作関数 *****//
 function makeArrayForCsv($file_name)
 {
     $csv_file = file_get_contents($file_name);
@@ -33,18 +26,18 @@ function makeArrayForCsv($file_name)
     $output_array = array();
     foreach($aryCsv as $item) {
         if (array_key_exists($item[3], $output_array)) {
-            if (is_null($item[7])) {
-                array_push($output_array[$item[3]], $item[4].$item[5].$item[6]);
+            if ($item[7] == "") {
+                array_push($output_array[$item[3]], array($item[4], $item[5], $item[6]));
                 sort($output_array[$item[3]]);
             } else {
-                array_push($output_array[$item[3]], $item[4].$item[5].$item[6].$item[7]);
+                array_push($output_array[$item[3]], array($item[4], $item[5], $item[6], $item[7]));
                 sort($output_array[$item[3]]);
             }
         } else {
-            if (is_null($item[7])) {
-                $output_array[$item[3]] = array($item[4].$item[5].$item[6]);
+            if ($item[7] == "") {
+                $output_array[$item[3]] = array(array($item[4], $item[5], $item[6]));
             } else {
-                $output_array[$item[3]] = array($item[4].$item[5].$item[6].$item[7]);
+                $output_array[$item[3]] = array(array($item[4], $item[5], $item[6], $item[7]));
             }
         }
     }
@@ -52,149 +45,230 @@ function makeArrayForCsv($file_name)
     return $output_array;
 }
 
-function getAddressInformationForNavitaimeApi($post_code)
-{ 
-    $curl = curl_init();
-    curl_setopt_array($curl, [
-        CURLOPT_URL => "https://navitime-geocoding.p.rapidapi.com/address/postal_code?postal_code=5700022&datum=wgs84&offset=0&coord_unit=degree&limit=10",
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_ENCODING => "",
-        CURLOPT_MAXREDIRS => 10,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-        CURLOPT_CUSTOMREQUEST => "GET",
-        CURLOPT_HTTPHEADER => [
-        "X-RapidAPI-Host: navitime-geocoding.p.rapidapi.com",
-        "X-RapidAPI-Key: 383ecb86f7msh50760c628d3b11dp1ac3e7jsn6aa8d6d904ff"
-        ],
-    ]);
-
-    $response = curl_exec($curl);
-    $err = curl_error($curl);
-
-    curl_close($curl);
-
-    if ($err) {
-        echo "cURL Error #:" . $err;
-    } else {
-        $response_obj = json_decode($response);
-        $items_obj = $response_obj->items;
-        $result_array = array();
-        // 返ってきたオブジェクトから、存在するであろう住所一覧を生成する
-        if (is_array($items_obj)) {
-            foreach($items_obj as $obj) {
-                array_push($result_array, $obj->name);
-            }
-            return $result_array;
-        } else {
-            echo "$post_code の結果が帰ってこない\n";
-        }
-    }
-}
-
-function compareAddressInformation($csv_array, $api_array)
+function checkData($csv_array)
 {
-    // APIの結果にあって、csvのリストにないので、抜け漏れの可能性あり
-    $exist_api_array = array();
-    foreach($api_array as $api_key => $api_values_array) {
-        if (!empty($api_values_array)) {
-            foreach ($api_values_array as $api) {
-                foreach ($csv_array[$api_key] as $csv) {
-                    if ($api == $csv) {
-                        if (empty($exist_api_array["$api_key"])) {
-                            $exist_api_array["$api_key"] = [$api];
-                        } else {
-                            foreach ($exist_api_array as $key => $val) {
-                                if ($key == $api_key) {
-                                    array_push($exist_api_array[$api_key], $api);
-                                }
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-            $not_api_array = array_diff_recursive($api_array, $exist_api_array);
-        }
-    }
+    print_r("===== チェック開始 =====\n");
+    foreach ($csv_array as $post_code => $address_array) {
+        print_r("==========\n");
+        print_r($post_code ." チェック\n");
+        if (count($address_array) == 1 && count($address_array[0]) == 3) {  // 郵便番号に1つしか住所が紐づいていない＆番地（x丁目）がない
+            checkGoogleMapApi($post_code, $address_array[0]);
+            continue;
+        } elseif (count($address_array) == 1 && count($address_array[0]) == 4) { // 郵便番号に1つしか住所が紐づいていない＆番地（x丁目）がある
+            // 歯抜けになっている可能性を指摘
+            if ($address_array[0][3] != "1丁目") {
+                // 1丁目ではないので、2以上の何かしらの数字が取れる
+                // 丁目を削除し、数字のみに
+                $j = getBanchi($address_array[0][3]);
 
-    // csvリストにあって、APIの結果にないので、調査必要（あまり想定していない）
-    $exist_csv_array = array();
-    foreach($csv_array as $csv_key => $csv_values_array) {
-        foreach ($csv_values_array as $csv) {
-            if (array_key_exists($csv_key, $api_array)) {
-                foreach ($api_array[$csv_key] as $api) {
-                    if ($api == $csv) {
-                        if (empty($exist_csv_array["$csv_key"])) {
-                            $exist_csv_array["$csv_key"] = [$csv];
-                        } else {
-                            foreach ($exist_csv_array as $key => $val) {
-                                if ($key == $csv_key) {
-                                    array_push($exist_csv_array[$csv_key], $csv);
-                                }
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        $not_csv_array = array_diff_recursive($csv_array, $exist_csv_array);
-    }
+                // -1して
+                $j = (int)$j - 1;
 
-    // 表示
-    if (empty($not_api_array)) {
-        echo "APIの結果にあって、csvのリストにない住所は存在しない！\n";
-    } else {
-        echo "APIの結果にあって、csvのリストにない住所は存在一覧：\n";
-        foreach ($not_api_array as $not_api_key => $not_api_array_detials) {
-            if (!empty($not_api_array_detials)) {
-                echo "郵便番号：". $not_api_key ."\n";
-                foreach ($not_api_array_detials as $ary) {
-                    echo "$ary\n";
-                }
-            }
-        }
-    }
-
-    if (empty($not_csv_array)) {
-        echo "CSVにあって、API結果にない住所は存在しない！\n";
-    } else {
-        echo "CSVにあって、APIの結果にない住所は存在一覧：\n";
-        foreach ($not_csv_array as $not_csv_key => $not_csv_array_detials) {
-            if (!empty($not_csv_array_detials)) {
-                echo "郵便番号". $not_csv_key ."\n";
-                foreach ($not_csv_array_detials as $ary) {
-                    echo "$ary\n";
-                }
-            }
-        }
-    }
-}
-
-// 多次元配列の差分
-// 参考： https://hotexamples.com/jp/examples/-/-/array_diff_recursive/php-array_diff_recursive-function-examples.html
-// 上記を一部カスタマイズ
-function array_diff_recursive($array1, $array2)
-{
-    //Compared two arrays recursively to find differences.
-    $output = array();
-    foreach ($array1 as $nKey => $nValue) {
-        if (array_key_exists($nKey, $array2)) {
-            if (is_array($nValue)) {
-                $recursiveDiff = array_diff($nValue, $array2[$nKey]);
-                if (count($recursiveDiff)) {
-                    $output[$nKey] = $recursiveDiff;
+                // 結合してプリント
+                $address_string = $address_array[0][0].$address_array[0][1].$address_array[0][2];
+                
+                if ($j == 1) {
+                    print_r($address_string."1丁目までのデータが含まれていませんが大丈夫すか？\n");
                 } else {
-                    if ($nValue != $array2[$nKey]) {
-                        $output[$nKey] = $nValue;
-                    }
+                    print_r($address_string."1丁目 〜 ".$j."丁目までのデータが含まれていませんが大丈夫すか？\n");
                 }
             }
-        } else {
-            $output[$nKey] = $nValue;
+            
+            // 住所が正しいかチェック＆次の番地あるかチェック
+            checkAddressAndNextAddressForGoogleMapApi($post_code, $address_array[0]);
+            continue;
+        } elseif (count($address_array) > 1 && count($address_array[0]) == 3) { // 郵便番号に複数の住所が紐づいている＆1番最初の住所に番地（x丁目）がない
+            // 住所がいくつあるか（配列キーに合わせて -1）
+            $count = count($address_array) - 1;
+
+            // 正しい番地かどうかを観測する変数
+            $x = 0;
+
+            // 現在の配列データの番地
+            $j = 0;
+            foreach ($address_array as $i => $item_address_array) {
+                if ($i == 0) { // 一番最初は、住所チェックのみ
+                    checkGoogleMapApi($post_code, $item_address_array);
+                } elseif ($i < $count) { // 2番目 〜 $count-1番目は歯抜けになってないか、と住所チェック
+                    // 歯抜けチェック
+                    $j = checkLostAddress($address_array, $item_address_array, $i, $x);
+                    
+                    // 住所チェック
+                    checkGoogleMapApi($post_code, $item_address_array);
+                } else { // 最後は住所チェックと、次の郵便番号がないかチェック
+                    // 歯抜けチェック
+                    $j = checkLostAddress($address_array, $item_address_array, $i, $x);
+
+                    // 住所が正しいかチェック＆次の番地あるかチェック
+                    checkAddressAndNextAddressForGoogleMapApi($post_code, $item_address_array);
+                }
+                $x = $j + 1;
+                continue;
+            } 
+            continue;
+        } else { // 郵便番号に複数の住所が紐づいている＆1番最初の住所に番地（x丁目）がある
+            // 住所がいくつあるか（配列キーに合わせて -1）
+            $count = count($address_array) - 1;
+
+            // 正しい番地かどうかを観測する変数
+            $x = 1;
+
+            // 現在の配列データの番地
+            $j = 1;
+            foreach ($address_array as $i => $item_address_array) {
+                if ($i < $count) { // 2番目 〜 $count-1番目は歯抜けになってないか、と住所チェック
+                    // 歯抜けチェック
+                    $j = checkLostAddress($address_array, $item_address_array, $i, $x, $j);
+
+                    // 住所チェック
+                    checkGoogleMapApi($post_code, $item_address_array);
+                } else { // 最後は住所チェックと、次の郵便番号がないかチェック
+                    // 歯抜けチェック
+                    $j = checkLostAddress($address_array, $item_address_array, $i, $x, $j);
+
+                    // 住所が正しいかチェック＆次の番地あるかチェック
+                    checkAddressAndNextAddressForGoogleMapApi($post_code, $item_address_array);
+                }
+                $x = $j + 1;
+                continue;
+            } 
+            continue;
         }
     }
-    return $output;
+    print_r("==========\n");
+    print_r("===== チェック完了 =====\n");
 }
+
+//***** サブ自作関数 *****//
+// GoogleMap APIに問い合わせ
+function checkGoogleMapApi($post_code_string, $address_array)
+{
+    $post_code = substr($post_code_string, 0, 3). "-" .substr($post_code_string, -4);
+    $address_string = makeAdressStringForArray($address_array);
+
+    list($response_address, $response_post_code) = requestGoogleMapApi($address_string);
+    
+    if ($address_string =! $response_address) {
+        print_r("住所が違う！\n");
+        print_r("csvデータ： ". $address_string ."\n");
+        print_r("GoogleMap： ". $response_address ."\n");
+    } elseif ($post_code =! $response_post_code) {
+        print_r("郵便番号が違う！\n");
+        print_r("csvデータ： ". $post_code ."\n");
+        print_r("GoogleMap： ". $response_post_code ."\n");
+    }
+}
+
+function checkNextAddressGoogleMapApi($post_code_string, $address_array)
+{
+    $post_code = substr($post_code_string, 0, 3). "-" .substr($post_code_string, -4);
+    $address_string = makeNextAdressStringForArray($address_array);
+
+    list($response_address, $response_post_code) = requestGoogleMapApi($address_string);
+
+    if ($address_string == $response_address && $post_code == $response_post_code) {
+        print_r("他にも番地がありそうですけど、大丈夫ですか？\n");
+        print_r($address_string. " 以降\n");
+    }
+}
+
+// 住所チェックと次の住所があるかのチェック
+function checkAddressAndNextAddressForGoogleMapApi($post_code_string, $address_array)
+{
+    // 郵便番号が正しいかチェック
+    checkGoogleMapApi($post_code_string, $address_array);
+
+    // 次の郵便番号ある？
+    checkNextAddressGoogleMapApi($post_code_string, $address_array);
+}
+
+// 本当にリクエストだけ投げる場所
+function requestGoogleMapApi($address_string)
+{
+    // リクエスト
+    $api_key = "AIzaSyBi4E3Kdw63Jt_l-ZHMwyHKcK1pBP-rOJc";
+    $request_url = "https://maps.googleapis.com/maps/api/geocode/json?address=". urlencode($address_string) ."&language=ja&components=country:JP&key=". $api_key;
+    $response_array = json_decode(file_get_contents($request_url), true);
+    
+    // 整形
+    $response_address = mb_convert_kana(preg_replace("/日本、〒\d{3}-\d{4} /", "", $response_array["results"][0]["formatted_address"]), "n");
+    preg_match("/\d{3}-\d{4}/", $response_array["results"][0]["formatted_address"], $post_code_match_array);
+    $response_post_code = $post_code_match_array[0];
+
+    return array($response_address, $response_post_code);
+}
+
+function makeAdressStringForArray($address_array)
+{
+    $i = 0;
+    $count = count($address_array);
+    $address_string = "";
+    while ($i < $count) {
+        $address_string = $address_string . $address_array[$i];
+        $i++;
+    }
+
+    return $address_string;
+}
+
+function makeNextAdressStringForArray($address_array)
+{
+    $i = 0;
+    $count = count($address_array);
+    $address_string = "";
+    while ($i < $count) {
+        if ($i == 3) {
+            // 丁目を削除し、数字のみに
+            $j = preg_replace("/丁目/", "", $address_array[3]);
+
+            // +1して
+            $j = (int)$j + 1;
+            
+            // 結合
+            $address_string = $address_string . (string)$j . "丁目";
+        } else {
+            $address_string = $address_string . $address_array[$i];
+        }
+        $i++;
+    }
+
+    return $address_string;
+}
+
+function getBanchi($address)
+{
+    return preg_replace("/丁目/", "", $address);
+}
+
+function checkLostAddress($address_array, $item_address_array, $i, $x)
+{
+    // 丁目を削除
+    $j = getBanchi($item_address_array[3]);
+
+    // 歯抜けになっていないかチェック
+    if ($x != $j) {
+        // 結合してプリント
+        $address_string = $item_address_array[0].$item_address_array[1].$item_address_array[2];
+        if ($j == 2) {
+            print_r($address_string."1丁目のデータが含まれていませんが大丈夫すか？\n");
+        } else {
+            // 確実に抜けている番地
+            $k = $j - 1;
+
+            // 1つ前のデータの番地を取得する
+            $l = getBanchi($address_array[$i-1][3]);
+
+            // 1つ前のデータは存在するので、1つ数字を足す
+            $l++;
+
+            if ($k == $l) {
+                print_r($address_string.$k."丁目のデータが含まれていませんが大丈夫すか？\n");
+            } else {
+                print_r($address_string.$l."丁目 〜 ".$k."丁目までのデータが含まれていませんが大丈夫すか？\n");
+            }
+        }
+    }
+
+    return $j;
+}
+
